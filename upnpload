@@ -13,8 +13,9 @@ import SocketServer
 import StringIO
 import posixpath
 import shutil
+import random
+import miniupnpc
 import atexit
-import upnp
 
 if not getattr(StringIO.StringIO, '__enter__', None):
 	# py2.6 and older StringIO has no context management protocol: http://bugs.python.org/issue1286
@@ -42,25 +43,101 @@ parser.add_argument('-c', metavar='CONTENT-TYPE', dest='ctype', default='applica
 	help='Force content-type')
 parser.add_argument('-l', dest='list_maps', action='store_true', default=False,
 	help='List active mappings and exit')
+parser.add_argument('-v', dest='verbose', action='store_true', default=False,
+	help='Print stuff')
 args = parser.parse_args()
 
+logfile = sys.stderr if args.verbose else StringIO.StringIO()
+
 if args.port and (args.ext_port or args.int_port):
-	print "---> error: can't use parameter -p with -e/-i"
+	print >>logfile, "---> error: can't use parameter -p with -e/-i"
 	sys.exit(1)
 
-print '---> searching for UPnP router/wifi...',
+# the real stuff starts here
+Host = collections.namedtuple('Host', 'addr port')
+Mapping = collections.namedtuple('Mapping', 'name external internal proto')
+MiniMapping = collections.namedtuple('MiniMapping', 'external_port proto internal name enabled external_addr duration')
+
+class Device:
+	def __init__(self, client):
+		self.client = client
+		self.map_prefix = 'upnpload'
+		self.url = client.selectigd()
+		self.type = client.connectiontype()
+		self.status = client.statusinfo()
+		self.external = Host(self.client.externalipaddress(), 0)
+		self.mappings, self.used_internal_ports, self.used_external_ports = self._mappings()
+
+	def __str__(self):
+		return 'Device(url=%s, type=%s, status=%s)' % (self.url, self.type, self.status)
+
+	def _mappings(self):
+		def _iter_mappings(cli):
+			for i in xrange(65535):
+				m = cli.getgenericportmapping(i)
+				if not m:
+					break
+				m = MiniMapping(*m)
+				yield Mapping(name=m.name, external=Host(m.external_addr, m.external_port), internal=Host(*m.internal), proto=m.proto)
+		mappings = list(itertools.takewhile(lambda x: x, _iter_mappings(self.client)))
+		used_local_ports = set([ x[0] for x in mappings ])
+		used_remote_ports = set([ x[2][1] for x in mappings ])
+		return mappings, used_local_ports, used_remote_ports
+
+	def _available_port(self, exclude):
+		i = random.randint(1025, 65535)
+		while i in exclude:
+			i = random.randint(1025, 65535)
+		return i
+
+	def map(self, external_ip='', external_port=0, internal_ip='', internal_port=0, proto='TCP'):
+		ext_ip   = external_ip # or self.client.externalipaddress()
+		int_ip   = internal_ip or self.client.lanaddr
+		ext_port = external_port or self._available_port(exclude=self.used_external_ports)
+		int_port = internal_port or self._available_port(exclude=self.used_internal_ports)
+		name_components = map(str, (ext_port, int_ip, int_port))
+		name = '%s-%s' % (self.map_prefix, '.'.join(name_components))
+		if not self.client.addportmapping(ext_port, proto.upper(), int_ip, int_port, name, ext_ip):
+			return False
+
+		self.mappings.append(Mapping(name=name, external=Host(ext_ip, ext_port), internal=Host(int_ip, int_port), proto=proto.upper()))
+		self.used_internal_ports.add(int_port)
+		self.used_external_ports.add(ext_port)
+
+		return self.mappings[-1]
+
+	def unmap(self, mapping, proto='TCP'):
+		try:
+			addr = mapping.external.addr
+			port = mapping.external.port
+			proto = mapping.proto
+		except:
+			addr = ''
+			port = mapping
+		self.client.deleteportmapping(port, proto, addr)
+
+def discover():
+	upnp = miniupnpc.UPnP()
+	upnp.discoverdelay = 2000
+
+	if not upnp.discover():
+		return None
+
+	return Device(upnp)
+
+print >>logfile, '---> searching for UPnP router/wifi...',
 sys.stdout.flush()
 try:
-	device = upnp.discover()
+	device = discover()
 except KeyboardInterrupt:
 	sys.exit(0)
 
 if not device:
-	print "---> I could not find a usable router/wifi device."
-	print "---> Maybe it is not UPnP capable or UPnP support is disabled."
-	print "---> Please check your device's config and try againg"
+	print >>logfile, "---> I could not find a usable router/wifi device."
+	print >>logfile, "---> Maybe it is not UPnP capable or UPnP support is disabled."
+	print >>logfile, "---> Please check your device's config and try againg"
 	sys.exit(1)
-print '%s (%s)' % (device.url, device.type)
+print >>logfile, '%s (%s)' % (device.url, device.type)
 
 if args.list_maps:
 	for m in filter(lambda x: x.name.startswith(device.map_prefix), device.mappings):
@@ -73,8 +150,8 @@ try:
 	mapping = device.map(external_port=args.ext_port, internal_port=args.int_port)
 	atexit.register(device.unmap, mapping)
 except Exception, ex:
-	print '---> Oops, something went wrong. This is the error message:'
-	print '%s: %s' % (ex.__class__.__name__, ex)
+	print >>logfile, '---> Oops, something went wrong. This is the error message:'
+	print >>logfile, '%s: %s' % (ex.__class__.__name__, ex)
 	sys.exit(1)
 
 if not mimetypes.inited:
@@ -94,7 +171,7 @@ class RestrictedHTTPServer(BaseHTTPServer.BaseHTTPRequestHandler):
 		shutil.copyfileobj(f, self.wfile)
 
 	def send_head(self):
-		print '---> %s %s from %s:%s' % tuple((self.command, self.path) + self.client_address)
+		print >>logfile, '---> %s %s from %s:%s' % tuple((self.command, self.path) + self.client_address)
 		if self.path in [ '', '/' ]:
 			path = sys.stdin.name
 			ctype = args.ctype
@@ -121,7 +198,7 @@ class RestrictedHTTPServer(BaseHTTPServer.BaseHTTPRequestHandler):
 			#self.send_header("Last-Modified", self.date_time_string(fs.st_mtime))
 		self.send_header("Content-type", ctype)
 		self.end_headers()
-		print '---> file %s served, %i left' % (file.name, left)
+		print >>logfile, '---> file %s served, %i left' % (file.name, left)
 		if not left:
 			args.FILE.remove(file)
 			RestrictedHTTPServer.served.pop(file.name, None)
@@ -129,7 +206,7 @@ class RestrictedHTTPServer(BaseHTTPServer.BaseHTTPRequestHandler):
 
 server = BaseHTTPServer.HTTPServer((mapping.internal.addr, mapping.internal.port), RestrictedHTTPServer)
 
-print '---> serving files:'
+print >>logfile, '---> serving files:'
 if args.FILE is sys.stdin:
 	print 'http://%s:%s' % (device.external.addr, mapping.external.port)
 else:
@@ -146,4 +223,4 @@ while serving():
 		server.handle_request()
 	except KeyboardInterrupt:
 		sys.exit(0)
-print '---> all files upload'
+print >>logfile, '---> all files uploaded'
