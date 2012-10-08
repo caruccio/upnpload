@@ -43,7 +43,7 @@ The same as before, but with some nice messages.
 - [miniupnp](https://github.com/miniupnp/miniupnp)
 
 ### RTFM
-    $ upnpload -h                                                                                                                  [9:54:24]
+    $ upnpload -h
     usage: upnpload [-h] [-e PORT] [-i PORT] [-p PORT] [-n COUNT]
                        [-c CONTENT-TYPE] [-l] [-v]
                        [FILE [FILE ...]]
