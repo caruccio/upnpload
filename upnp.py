@@ -11,6 +11,7 @@ MiniMapping = collections.namedtuple('MiniMapping', 'external_port proto interna
 class Device:
 	def __init__(self, client):
 		self.client = client
+		self.map_prefix = 'upnpload'
 		self.url = client.selectigd()
 		self.type = client.connectiontype()
 		self.status = client.statusinfo()
@@ -29,9 +30,9 @@ class Device:
 				m = MiniMapping(*m)
 				yield Mapping(name=m.name, external=Host(m.external_addr, m.external_port), internal=Host(*m.internal), proto=m.proto)
 		mappings = list(itertools.takewhile(lambda x: x, _iter_mappings(self.client)))
-		used_local = set([ x[0] for x in mappings ])
-		used_remote = set([ x[2][1] for x in mappings ])
-		return mappings, used_local, used_remote
+		used_local_ports = set([ x[0] for x in mappings ])
+		used_remote_ports = set([ x[2][1] for x in mappings ])
+		return mappings, used_local_ports, used_remote_ports
 
 	def _available_port(self, exclude):
 		i = random.randint(1025, 65535)
@@ -45,7 +46,7 @@ class Device:
 		ext_port = external_port or self._available_port(exclude=self.used_external_ports)
 		int_port = internal_port or self._available_port(exclude=self.used_internal_ports)
 		name_components = map(str, (ext_port, int_ip, int_port))
-		name     = 'upnpload-%s' % '.'.join(name_components)
+		name = '%s-%s' % (self.map_prefix, '.'.join(name_components))
 		if not self.client.addportmapping(ext_port, proto.upper(), int_ip, int_port, name, ext_ip):
 			return False
 
