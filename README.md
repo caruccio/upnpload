@@ -11,7 +11,7 @@ of course, it must be enabled.
 
 ## Usage
 
-    $ upnpload hello.txt world.txt                                                                                                 [9:51:37]
+    $ upnpload hello.txt world.txt
     http://189.63.158.15:18182/hello.txt
     http://189.63.158.15:18182/world.txt
 
@@ -19,6 +19,7 @@ Each file can be downloaded only once. Use _-n_ to increase this value.
 
 The same as before, but with some nice messages.
 
+    $ upnpload hello.txt world.txt -v
     ---> searching for UPnP router/wifi... http://192.168.1.1:1780/control?WANIPConnection (IP_Routed)
     ---> serving files:
     http://189.63.158.15:63457/hello.txt
