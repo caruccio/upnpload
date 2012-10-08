@@ -35,6 +35,12 @@ The same as before, but with some nice messages.
 ### Installation
 
     $ sudo wget https://raw.github.com/caruccio/upnpload/master/upnpload -O /usr/local/bin/upnpload
+    $ sudo chmod +x /usr/local/bin/upnpload
+
+#### Dependencies
+
+- Python >= 2.6
+- [miniupnp](https://github.com/miniupnp/miniupnp)
 
 ### RTFM
     $ upnpload -h                                                                                                                  [9:54:24]
